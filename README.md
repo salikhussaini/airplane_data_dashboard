@@ -2,6 +2,8 @@
 
 A comprehensive Streamlit dashboard for visualizing and analyzing airplane flight data with advanced aggregations and rolling window analysis.
 
+**🚀 Live Dashboard**: [View the Live Dashboard](https://airplane-data-dashboard.streamlit.app/)
+
 ## Features
 
 ### 📊 Summary View
@@ -37,10 +39,13 @@ aircraft_dashboard/
 ├── main.py                    # Streamlit application
 ├── config.py                  # Configuration (GOLD_DATA_DIR setting)
 ├── requirements.txt           # Python dependencies
-├── gold_data/                 # Data storage directory
-│   └── master/               # Master aggregated data files
-│       └── gold_master_all_*.parquet
-└── README.md                  # This file
+├── .streamlit/               # Streamlit configuration folder
+│   └── config.toml           # Streamlit app configuration
+├── gold_data/                # Data storage directory
+│   ├── master/              # Master aggregated data files
+│   │   └── gold_master_all_*.parquet
+│   └── README.md            # Data documentation
+└── README.md                # This file
 ```
 
 ## Setup Instructions
@@ -89,12 +94,16 @@ aircraft_dashboard/
 
 ## Running the Dashboard
 
-### Start the Streamlit app:
+### Local Development
+Start the Streamlit app locally:
 ```bash
 streamlit run main.py
 ```
 
 The dashboard will open in your default browser at `http://localhost:8501`
+
+### View Live Dashboard
+Visit the deployed version at: [https://airplane-data-dashboard.streamlit.app/](https://airplane-data-dashboard.streamlit.app/)
 
 ## Data Format Requirements
 

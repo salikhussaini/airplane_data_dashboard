@@ -8,7 +8,6 @@ import streamlit as st
 import polars as pl
 import pandas as pd
 from pathlib import Path
-from config import GOLD_DATA_DIR
 from datetime import datetime
 import plotly.express as px
 import plotly.graph_objects as go
@@ -16,6 +15,9 @@ import plotly.graph_objects as go
 # ============================================================================
 # PAGE CONFIG
 # ============================================================================
+# Project root directory
+PROJECT_ROOT = Path(__file__).parent
+GOLD_DATA_DIR = PROJECT_ROOT / "gold_data"
 
 st.set_page_config(
     page_title="Airplane Data Dashboard",

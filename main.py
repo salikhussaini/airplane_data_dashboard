@@ -8,12 +8,11 @@ import streamlit as st
 import polars as pl
 import pandas as pd
 from pathlib import Path
+from config import GOLD_DATA_DIR
 from datetime import datetime
 import plotly.express as px
 import plotly.graph_objects as go
 
-PROJECT_ROOT = Path(__file__).parent
-GOLD_DATA_DIR = PROJECT_ROOT / "gold_data"
 # ============================================================================
 # PAGE CONFIG
 # ============================================================================
@@ -77,7 +76,7 @@ def get_gold_data(master_df):
     
     # Get each gold type
     if "gold_type" in gold_df.columns:
-        for gold_type in ["gold_by_country", "gold_by_aircraft", "gold_by_snapshot", "gold_summary"]:
+        for gold_type in ["gold_by_country", "gold_by_aircraft", "gold_by_airline", "gold_by_country_airline", "gold_by_snapshot", "gold_summary"]:
             filtered = gold_df.filter(pl.col("gold_type") == gold_type)
             if len(filtered) > 0:
                 key = gold_type.replace("gold_", "")
@@ -96,9 +95,10 @@ def get_rolling_data(master_df):
         for rolling_type in ["r12_1day", "r12_3day", "r12_7day", "r12_14day", "r12_30day"]:
             filtered = rolling_df.filter(pl.col("rolling_type") == rolling_type)
             if len(filtered) > 0:
-                # Separate global and by-country
-                global_only = filtered.filter(pl.col("country").is_null())
-                by_country = filtered.filter(pl.col("country").is_not_null())
+                # Separate global, by-country, and by-airline
+                global_only = filtered.filter((pl.col("country").is_null()) & (pl.col("airline_name").is_null()))
+                by_country = filtered.filter((pl.col("country").is_not_null()) & (pl.col("airline_name").is_null()))
+                by_airline = filtered.filter(pl.col("airline_name").is_not_null())
                 
                 if len(global_only) > 0:
                     rolling_data[f"rolling_global_{rolling_type.split('_')[1]}"] = global_only.drop(
@@ -107,6 +107,11 @@ def get_rolling_data(master_df):
                 
                 if len(by_country) > 0:
                     rolling_data[f"rolling_country_{rolling_type.split('_')[1]}"] = by_country.drop(
+                        ["report_type", "rolling_type", "report_period"]
+                    )
+                
+                if len(by_airline) > 0:
+                    rolling_data[f"rolling_airline_{rolling_type.split('_')[1]}"] = by_airline.drop(
                         ["report_type", "rolling_type", "report_period"]
                     )
     
@@ -136,7 +141,7 @@ view_mode = st.sidebar.radio(
 # ============================================================================
 
 if view_mode == "📊 Summary View":
-    tab1, tab2, tab3, tab4 = st.tabs(["📈 Summary", "✈️ Aircraft", "🌍 Origin Country", "📸 Snapshots"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📈 Summary", "✈️ Aircraft", "🌍 Origin Country", "✈️ Airlines", "🌍 Country-Airline", "📸 Snapshots"])
     
     with tab1:
         st.subheader("Dashboard Overview")
@@ -205,8 +210,28 @@ if view_mode == "📊 Summary View":
                 except:
                     st.metric(label="In-Air Records", value=on_air)
             
+            # Display airport metrics
+            st.markdown("#### ✈️ Airport Metrics")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                airport_value = metrics_dict.get("unique_airports", "N/A")
+                try:
+                    airport_int = int(float(airport_value)) if airport_value != "N/A" else "N/A"
+                    st.metric(label="Unique Airports", value=f"{airport_int:,.0f}" if isinstance(airport_int, int) else airport_int)
+                except:
+                    st.metric(label="Unique Airports", value=airport_value)
+            with col2:
+                ground_value = metrics_dict.get("aircraft_on_ground", "0")
+                try:
+                    ground_int = int(float(ground_value))
+                    st.metric(label="Aircraft on Ground", value=f"{ground_int:,.0f}")
+                except:
+                    st.metric(label="Aircraft on Ground", value=ground_value)
+            with col3:
+                st.metric(label="Airport Coverage", value="Ground aircraft only")
+            
             # Country-level KPIs
-            st.markdown("#### 🌎 Country-Level Insights")
+            st.markdown("#### 🌍 Country-Level Insights")
             if "by_country" in data and len(data["by_country"]) > 0:
                 country_df = data["by_country"].to_pandas()
                 col1, col2, col3 = st.columns(3)
@@ -326,10 +351,23 @@ if view_mode == "📊 Summary View":
             # Top aircraft by geographic diversity
             st.markdown("#### Most Widely-Traveled Aircraft")
             if "num_locations_visited" in aircraft_df.columns:
-                top_diverse = aircraft_df.nlargest(10, "num_locations_visited")[
-                    ["icao24", "callsign", "num_locations_visited", "num_regions_visited", "primary_location", "primary_region"]
-                ].sort_values("num_locations_visited", ascending=False)
+                cols_to_show = ["icao24", "callsign", "num_locations_visited", "num_regions_visited", "primary_location", "primary_region"]
+                if "airline_name" in aircraft_df.columns:
+                    cols_to_show.insert(2, "airline_name")
+                top_diverse = aircraft_df.nlargest(10, "num_locations_visited")[cols_to_show].sort_values("num_locations_visited", ascending=False)
                 st.dataframe(top_diverse, use_container_width=True)
+            
+            # Aircraft with most airport visits
+            st.markdown("#### Most Frequent Airport Visitors")
+            if "num_airports_visited" in aircraft_df.columns:
+                cols_to_show = ["icao24", "callsign", "num_airports_visited", "primary_airport", "airport_country", "airport_region"]
+                if "airline_name" in aircraft_df.columns:
+                    cols_to_show.insert(2, "airline_name")
+                airport_visitors = aircraft_df[aircraft_df["num_airports_visited"] > 0].nlargest(10, "num_airports_visited")[cols_to_show].sort_values("num_airports_visited", ascending=False)
+                if len(airport_visitors) > 0:
+                    st.dataframe(airport_visitors, use_container_width=True)
+                else:
+                    st.info("No airport data available for aircraft")
             
             st.markdown("#### Aircraft Data Table")
             st.dataframe(aircraft_df, use_container_width=True)
@@ -470,6 +508,103 @@ if view_mode == "📊 Summary View":
             st.info("No origin country data available")
     
     with tab4:
+        st.subheader("Airline Analysis - Visualizations")
+        if "by_airline" in data and len(data["by_airline"]) > 0:
+            airline_df = data["by_airline"].to_pandas()
+            
+            st.markdown("#### Top 15 Airlines by Aircraft Count")
+            if "unique_aircraft" in airline_df.columns and "airline_name" in airline_df.columns:
+                top_airlines = airline_df.nlargest(15, "unique_aircraft").sort_values("unique_aircraft")
+                
+                fig = px.bar(
+                    top_airlines,
+                    x="unique_aircraft",
+                    y="airline_name",
+                    orientation="h",
+                    color="unique_aircraft",
+                    color_continuous_scale="Greens",
+                    title="Top 15 Airlines by Unique Aircraft",
+                    labels={"airline_name": "Airline", "unique_aircraft": "Aircraft"},
+                    height=400
+                )
+                fig.update_layout(
+                    coloraxis_colorbar=dict(
+                        thickness=20,
+                        len=0.7,
+                        tickformat=".0f"
+                    )
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            
+            st.markdown("#### Top Airlines by Records")
+            if "total_records" in airline_df.columns and "airline_name" in airline_df.columns:
+                top_by_records = airline_df.nlargest(15, "total_records").sort_values("total_records")
+                
+                fig = px.bar(
+                    top_by_records,
+                    x="total_records",
+                    y="airline_name",
+                    orientation="h",
+                    color="total_records",
+                    color_continuous_scale="Blues",
+                    title="Top 15 Airlines by Total Records",
+                    labels={"airline_name": "Airline", "total_records": "Records"},
+                    height=400
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            
+            st.markdown("#### Airline Geographic Coverage")
+            if "unique_countries" in airline_df.columns:
+                airline_coverage = airline_df.nlargest(10, "unique_countries")[
+                    ["airline_name", "unique_aircraft", "unique_countries", "unique_locations", "unique_regions"]
+                ].sort_values("unique_countries", ascending=False)
+                st.dataframe(airline_coverage, use_container_width=True)
+
+        else:
+            st.info("No airline data available")
+    
+    with tab5:
+        st.subheader("Country-Airline Analysis - Geographic Distribution")
+        if "by_country_airline" in data and len(data["by_country_airline"]) > 0:
+            country_airline_df = data["by_country_airline"].to_pandas()
+            
+            st.markdown("#### Top 20 Country-Airline Pairs by Records")
+            if "total_records" in country_airline_df.columns:
+                top_pairs = country_airline_df.nlargest(20, "total_records").sort_values("total_records")
+                top_pairs['country_airline'] = top_pairs['origin_country'] + " - " + top_pairs['airline_name']
+                
+                fig = px.bar(
+                    top_pairs,
+                    x="total_records",
+                    y="country_airline",
+                    orientation="h",
+                    color="total_records",
+                    color_continuous_scale="Purples",
+                    title="Top 20 Country-Airline Pairs by Records",
+                    labels={"country_airline": "Country-Airline", "total_records": "Records"},
+                    height=500
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            
+            st.markdown("#### Airline Presence by Country")
+            if "origin_country" in country_airline_df.columns and "airline_name" in country_airline_df.columns:
+                airlines_per_country = country_airline_df.groupby("origin_country").agg({
+                    "airline_name": "count",
+                    "total_records": "sum",
+                    "unique_aircraft": "sum"
+                }).rename(columns={
+                    "airline_name": "num_airlines",
+                    "total_records": "total_records",
+                    "unique_aircraft": "total_aircraft"
+                }).sort_values("num_airlines", ascending=False).head(15)
+                st.dataframe(airlines_per_country, use_container_width=True)
+            
+            st.markdown("#### Country-Airline Data Table")
+            st.dataframe(country_airline_df, use_container_width=True)
+        else:
+            st.info("No country-airline data available")
+    
+    with tab6:
         st.subheader("Time Series Analysis - Snapshot Breakdown")
         if "by_snapshot" in data and len(data["by_snapshot"]) > 0:
             snapshot_df = data["by_snapshot"].to_pandas()
@@ -480,19 +615,19 @@ if view_mode == "📊 Summary View":
                 "unique_locations": "sum",
                 "unique_regions": "sum",
                 "unique_countries": "sum",
+                "unique_airports": "sum" if "unique_airports" in snapshot_df.columns else None,
                 "avg_altitude": "mean",
                 "avg_velocity": "mean"
             }).reset_index()
             st.markdown("#### Snapshot-by-Snapshot Breakdown")
             display_cols = ["snapshot_date", "total_records", "unique_aircraft", "unique_locations", 
-                           "unique_regions", "unique_countries", "avg_altitude", "avg_velocity"]
-            display_cols = [c for c in display_cols if c in snapshot_df.columns]
+                           "unique_regions", "unique_countries", "unique_airports", "avg_altitude", "avg_velocity"]
+            display_cols = [c for c in display_cols if c in agg.columns]
             st.dataframe(agg[display_cols], use_container_width=True)
             
-            st.markdown("#### Full Snapshot Data Table")
-            st.dataframe(snapshot_df, use_container_width=True)
         else:
             st.info("No snapshot data available")
+
 
 # ============================================================================
 # ROLLING WINDOWS VIEW
@@ -518,7 +653,7 @@ else:
         selected_window = st.sidebar.selectbox("Select Window Size", options=list(window_options.keys()))
         window_size = window_options[selected_window]
         
-        global_tab, country_tab = st.tabs(["🌐 Global Windows", "🌍 Origin Country Windows"])
+        global_tab, country_tab, airline_tab = st.tabs(["🌐 Global Windows", "🌍 Origin Country Windows", "✈️ Airline Windows"])
         
         # ========== GLOBAL WINDOWS ==========
         with global_tab:
@@ -636,9 +771,6 @@ else:
                         st.metric("Δ Max Alt", f"{delta_max_alt:,.0f}", delta=f"{(delta_max_alt/previous['max_altitude']*100):.1f}%")
                     with col3:
                         st.metric("Max Altitude (ft)", f"{previous['max_altitude']:,.0f}")
-                    
-                    st.markdown("#### Full Rolling Window Data Table")
-                    st.dataframe(rolling_df, use_container_width=True)
                 elif len(rolling_df) == 1:
                     current = rolling_df.iloc[0]
                     current_start = current.get('report_period_start', 'N/A')
@@ -870,6 +1002,100 @@ else:
                 
             else:
                 st.info(f"No origin country-level data available for {selected_window}")
+        
+        # ========== AIRLINE WINDOWS ==========
+        with airline_tab:
+            st.markdown(f"#### {selected_window} Airline Rolling Windows - Top Airlines")
+            
+            airline_key = f"rolling_airline_{window_size}day"
+            
+            if airline_key in rolling_data:
+                airline_rolling_df = rolling_data[airline_key].to_pandas()
+                
+                # Show aggregate stats across all airlines
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Airlines", airline_rolling_df["airline_name"].nunique())
+                with col2:
+                    st.metric("Total Windows", len(airline_rolling_df))
+                with col3:
+                    if "total_records" in airline_rolling_df.columns:
+                        st.metric("Avg Records/Window", f"{airline_rolling_df['total_records'].mean():,.0f}")
+                with col4:
+                    if "avg_daily_unique_aircraft" in airline_rolling_df.columns:
+                        st.metric("Avg Aircraft", f"{airline_rolling_df['avg_daily_unique_aircraft'].mean():,.0f}")
+                
+                st.divider()
+                
+                # Get latest window date
+                windows_sorted = sorted(airline_rolling_df["report_period_end"].unique(), reverse=True)
+                
+                if len(windows_sorted) >= 1:
+                    current_window_date = windows_sorted[0]
+                    current_window_df = airline_rolling_df[airline_rolling_df["report_period_end"] == current_window_date].sort_values("total_records", ascending=False)
+                    
+                    # Display current window date range
+                    st.markdown(f"#### 📅 Current Window: {current_window_date.date()}")
+                    
+                    # Top airlines by records
+                    st.markdown("#### Top 10 Airlines by Records (Current Window)")
+                    if "total_records" in current_window_df.columns and "airline_name" in current_window_df.columns:
+                        top_airlines = current_window_df.nlargest(10, "total_records")[
+                            ["airline_name", "total_records", "avg_daily_unique_aircraft", "avg_altitude", "avg_daily_velocity"]
+                        ]
+                        st.dataframe(top_airlines, use_container_width=True)
+                    
+                    # Top airlines by aircraft
+                    st.markdown("#### Top 10 Airlines by Aircraft (Current Window)")
+                    if "avg_daily_unique_aircraft" in current_window_df.columns and "airline_name" in current_window_df.columns:
+                        top_by_aircraft = current_window_df.nlargest(10, "avg_daily_unique_aircraft")[
+                            ["airline_name", "avg_daily_unique_aircraft", "total_records", "avg_altitude", "avg_daily_velocity"]
+                        ]
+                        st.dataframe(top_by_aircraft, use_container_width=True)
+                    
+                    # On-Ground vs In-Air for top airlines
+                    st.markdown("#### Fleet Status - Top 10 Airlines (Current Window)")
+                    if "total_on_ground" in current_window_df.columns and "total_in_air" in current_window_df.columns:
+                        fleet_status = current_window_df.nlargest(10, "total_records")[
+                            ["airline_name", "total_on_ground", "total_in_air", "total_records"]
+                        ].copy()
+                        fleet_status["ground_pct"] = (fleet_status["total_on_ground"] / fleet_status["total_records"] * 100).round(1)
+                        fleet_status["air_pct"] = (fleet_status["total_in_air"] / fleet_status["total_records"] * 100).round(1)
+                        st.dataframe(fleet_status, use_container_width=True)
+                    
+                    # Comparison with previous window (if available)
+                    if len(windows_sorted) > int(window_size):
+                        st.markdown(f"#### 📊 Comparison: Current vs Previous {selected_window} Window")
+                        previous_window_date = windows_sorted[int(window_size)]
+                        previous_window_df = airline_rolling_df[airline_rolling_df["report_period_end"] == previous_window_date].sort_values("total_records", ascending=False)
+                        
+                        # Get common airlines and compare
+                        current_airlines = set(current_window_df["airline_name"])
+                        previous_airlines = set(previous_window_df["airline_name"])
+                        common_airlines = current_airlines & previous_airlines
+                        
+                        if common_airlines:
+                            comparison_data = []
+                            for airline in sorted(common_airlines):
+                                curr = current_window_df[current_window_df["airline_name"] == airline].iloc[0]
+                                prev = previous_window_df[previous_window_df["airline_name"] == airline].iloc[0]
+                                
+                                change = curr["total_records"] - prev["total_records"]
+                                pct_change = (change / prev["total_records"] * 100) if prev["total_records"] > 0 else 0
+                                
+                                comparison_data.append({
+                                    "Airline": airline,
+                                    "Current Records": int(curr["total_records"]),
+                                    "Previous Records": int(prev["total_records"]),
+                                    "Change": int(change),
+                                    "% Change": f"{pct_change:+.1f}%"
+                                })
+                            
+                            comparison_df = pd.DataFrame(comparison_data).sort_values("Change", ascending=False)
+                            st.dataframe(comparison_df, use_container_width=True)
+
+            else:
+                st.info(f"No airline-level rolling window data available for {selected_window}")
 
 # ============================================================================
 # FOOTER

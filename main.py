@@ -143,7 +143,7 @@ view_mode = st.sidebar.radio(
 # ============================================================================
 
 if view_mode == "📊 Summary View":
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📈 Summary", "✈️ Aircraft", "🌍 Origin Country", "✈️ Airlines", "🌍 Country-Airline", "📸 Snapshots"])
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["📈 Summary", "✈️ Aircraft", "🌍 Origin Country", "✈️ Airlines", "🌍 Country-Airline", "📸 Snapshots", "🛫 Flight Paths"])
     
     with tab1:
         st.subheader("Dashboard Overview")
@@ -629,6 +629,205 @@ if view_mode == "📊 Summary View":
             
         else:
             st.info("No snapshot data available")
+
+
+# ============================================================================
+# FLIGHT PATHS TAB (NEW)
+# ============================================================================
+
+    with tab7:
+        st.subheader("🛫 Flight Path Analysis - Landing Patterns & Routes")
+        if "first_last_by_aircraft" in data and len(data["first_last_by_aircraft"]) > 0:
+            flight_df = data["first_last_by_aircraft"].to_pandas()
+            
+            # Remove rows where distance is null for meaningful analysis
+            flight_valid = flight_df[
+                (flight_df['distance_from_prev_km'].notna()) | 
+                (flight_df['distance_to_next_km'].notna())
+            ].copy()
+            
+            if len(flight_valid) > 0:
+                st.markdown("#### 📊 Flight Statistics Overview")
+                
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    avg_dist_prev = flight_valid['distance_from_prev_km'].mean()
+                    st.metric("Avg Distance from Prev Landing", f"{avg_dist_prev:,.0f} km" if pd.notna(avg_dist_prev) else "N/A")
+                
+                with col2:
+                    avg_dist_next = flight_valid['distance_to_next_km'].mean()
+                    st.metric("Avg Distance to Next Landing", f"{avg_dist_next:,.0f} km" if pd.notna(avg_dist_next) else "N/A")
+                
+                with col3:
+                    avg_time_prev = flight_valid['time_diff_from_prev_hours'].mean()
+                    st.metric("Avg Time from Prev Landing", f"{avg_time_prev:,.1f} hrs" if pd.notna(avg_time_prev) else "N/A")
+                
+                with col4:
+                    avg_time_next = flight_valid['time_diff_to_next_hours'].mean()
+                    st.metric("Avg Time to Next Landing", f"{avg_time_next:,.1f} hrs" if pd.notna(avg_time_next) else "N/A")
+                
+                st.divider()
+                
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    max_dist = flight_valid[['distance_from_prev_km', 'distance_to_next_km']].max().max()
+                    st.metric("Longest Distance", f"{max_dist:,.0f} km" if pd.notna(max_dist) else "N/A")
+                
+                with col2:
+                    avg_alt_change = flight_valid['altitude_change'].mean()
+                    st.metric("Avg Altitude Change", f"{avg_alt_change:,.0f} ft" if pd.notna(avg_alt_change) else "N/A")
+                
+                with col3:
+                    min_time = flight_valid[['time_diff_from_prev_hours', 'time_diff_to_next_hours']].min().min()
+                    st.metric("Min Time Between Landings", f"{min_time:,.2f} hrs" if pd.notna(min_time) else "N/A")
+                
+                with col4:
+                    max_time = flight_valid[['time_diff_from_prev_hours', 'time_diff_to_next_hours']].max().max()
+                    st.metric("Max Time Between Landings", f"{max_time:,.1f} hrs" if pd.notna(max_time) else "N/A")
+                
+                st.divider()
+                
+                # Distribution charts
+                st.markdown("#### 📈 Distance Distribution")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    dist_prev_valid = flight_valid['distance_from_prev_km'].dropna()
+                    if len(dist_prev_valid) > 0:
+                        fig = px.histogram(
+                            dist_prev_valid,
+                            nbins=50,
+                            title="Distance from Previous Landing (km)",
+                            labels={"value": "Distance (km)", "count": "Count"},
+                            color_discrete_sequence=["#1f77b4"]
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                
+                with col2:
+                    dist_next_valid = flight_valid['distance_to_next_km'].dropna()
+                    if len(dist_next_valid) > 0:
+                        fig = px.histogram(
+                            dist_next_valid,
+                            nbins=50,
+                            title="Distance to Next Landing (km)",
+                            labels={"value": "Distance (km)", "count": "Count"},
+                            color_discrete_sequence=["#ff7f0e"]
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                
+                st.markdown("#### ⏱️ Time Distribution Between Landings")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    time_prev_valid = flight_valid['time_diff_from_prev_hours'].dropna()
+                    if len(time_prev_valid) > 0:
+                        fig = px.histogram(
+                            time_prev_valid,
+                            nbins=50,
+                            title="Time from Previous Landing (hours)",
+                            labels={"value": "Time (hours)", "count": "Count"},
+                            color_discrete_sequence=["#2ca02c"]
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                
+                with col2:
+                    time_next_valid = flight_valid['time_diff_to_next_hours'].dropna()
+                    if len(time_next_valid) > 0:
+                        fig = px.histogram(
+                            time_next_valid,
+                            nbins=50,
+                            title="Time to Next Landing (hours)",
+                            labels={"value": "Time (hours)", "count": "Count"},
+                            color_discrete_sequence=["#d62728"]
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                
+                st.markdown("#### 🛫 Top Aircraft by Total Distance Traveled")
+                
+                # Calculate total distance per aircraft
+                aircraft_distances = []
+                for icao in flight_valid['icao24'].unique():
+                    aircraft_flights = flight_valid[flight_valid['icao24'] == icao]
+                    total_dist_prev = aircraft_flights['distance_from_prev_km'].sum()
+                    total_dist_next = aircraft_flights['distance_to_next_km'].sum()
+                    total_dist = max(total_dist_prev, total_dist_next)  # Use one direction to avoid double counting
+                    
+                    aircraft_distances.append({
+                        'icao24': icao,
+                        'callsign': aircraft_flights['callsign'].iloc[0] if 'callsign' in aircraft_flights.columns else '',
+                        'country': aircraft_flights['origin_country'].iloc[0] if 'origin_country' in aircraft_flights.columns else '',
+                        'num_landings': len(aircraft_flights),
+                        'total_distance_km': total_dist,
+                        'avg_distance_per_flight': total_dist / len(aircraft_flights) if len(aircraft_flights) > 0 else 0
+                    })
+                
+                if aircraft_distances:
+                    aircraft_dist_df = pd.DataFrame(aircraft_distances).sort_values('total_distance_km', ascending=False).head(15)
+                    
+                    fig = px.bar(
+                        aircraft_dist_df,
+                        x='total_distance_km',
+                        y='icao24',
+                        orientation='h',
+                        color='avg_distance_per_flight',
+                        color_continuous_scale='Viridis',
+                        title='Top 15 Aircraft by Total Distance Traveled',
+                        labels={'icao24': 'Aircraft (ICAO24)', 'total_distance_km': 'Total Distance (km)', 'avg_distance_per_flight': 'Avg per Flight'},
+                        hover_data={'callsign': True, 'country': True, 'num_landings': True}
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    st.markdown("#### 📋 Aircraft Flight Metrics")
+                    st.dataframe(aircraft_dist_df.sort_values('total_distance_km', ascending=False), use_container_width=True)
+                
+                st.markdown("#### 🌍 Altitude Change Statistics")
+                
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    max_alt_change = flight_valid['altitude_change'].max()
+                    st.metric("Max Altitude Gain", f"{max_alt_change:,.0f} ft" if pd.notna(max_alt_change) else "N/A")
+                
+                with col2:
+                    min_alt_change = flight_valid['altitude_change'].min()
+                    st.metric("Max Altitude Loss", f"{min_alt_change:,.0f} ft" if pd.notna(min_alt_change) else "N/A")
+                
+                with col3:
+                    std_alt_change = flight_valid['altitude_change'].std()
+                    st.metric("Altitude Change Std Dev", f"{std_alt_change:,.0f} ft" if pd.notna(std_alt_change) else "N/A")
+                
+                # Altitude change distribution
+                alt_change_valid = flight_valid['altitude_change'].dropna()
+                if len(alt_change_valid) > 0:
+                    fig = px.histogram(
+                        alt_change_valid,
+                        nbins=50,
+                        title="Altitude Change Distribution (ft)",
+                        labels={"value": "Altitude Change (ft)", "count": "Count"},
+                        color_discrete_sequence=["#9467bd"]
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                st.markdown("#### 📊 Detailed Flight Records")
+                
+                # Display detailed table with key metrics
+                display_cols = ['icao24', 'callsign', 'distance_from_prev_km', 'distance_to_next_km', 
+                               'time_diff_from_prev_hours', 'time_diff_to_next_hours', 'altitude_change']
+                display_cols = [c for c in display_cols if c in flight_df.columns]
+                
+                if display_cols:
+                    st.dataframe(
+                        flight_df[display_cols].head(100).sort_values('distance_from_prev_km', ascending=False, na_position='last'),
+                        use_container_width=True
+                    )
+            else:
+                st.info("No valid flight path data with distance calculations available")
+        else:
+            st.info("No flight path data available. Ensure get_first_last_by_aircraft() was run in aggregations.")
 
 
 # ============================================================================
